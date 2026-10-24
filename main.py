@@ -25,6 +25,12 @@ INTERVALO_SEGUNDOS = 60
 KEEPALIVE_URL = os.getenv("KEEPALIVE_URL", "https://bot-anti-raid-icvm.onrender.com/")
 KEEPALIVE_SEGUNDOS = 15
 CARGO_GERENTE = os.getenv("CARGO_GERENTE", "gerente").strip().lower()
+# Pessoas sempre liberadas para o comando (IDs ou @, separados por vírgula). Prefira o ID.
+USUARIOS_LIBERADOS = {
+    x.strip().lstrip("@").lower()
+    for x in os.getenv("USUARIOS_LIBERADOS", "").split(",")
+    if x.strip()
+}
 
 RE_ID = re.compile(r"^\d{15,25}$")
 RE_USERNAME = re.compile(r"^[a-z0-9_.]{2,32}$")
@@ -114,18 +120,31 @@ add = app_commands.Group(
 
 
 def pode_usar(membro: discord.Member) -> bool:
-    """Dono do servidor ou quem tem o cargo de gerente."""
-    if membro.id == membro.guild.owner_id:
+    """Libera: dono, pessoas liberadas, quem tem Administrador ou cargo igual/acima do Gerente."""
+    guild = membro.guild
+    if membro.id == guild.owner_id:
         return True
-    return any(cargo.name.strip().lower() == CARGO_GERENTE for cargo in membro.roles)
+    if str(membro.id) in USUARIOS_LIBERADOS or membro.name.lower() in USUARIOS_LIBERADOS:
+        return True
+    if membro.guild_permissions.administrator:
+        return True
+    gerente = discord.utils.find(
+        lambda r: r.name.strip().lower() == CARGO_GERENTE, guild.roles
+    )
+    return gerente is not None and membro.top_role.position >= gerente.position
 
 
 @add.command(name="auto", description="Adiciona uma pessoa ao auto ban deste servidor")
 @app_commands.describe(ban="@ da pessoa (ex: @fulano) ou o ID do Discord")
 async def add_auto(interaction: discord.Interaction, ban: str):
     if not pode_usar(interaction.user):
+        log.warning(
+            '[NEGADO] @%s (%s) em "%s": dono do servidor = %s, cargo mais alto = "%s"',
+            interaction.user.name, interaction.user.id, interaction.guild.name,
+            interaction.guild.owner_id, interaction.user.top_role.name,
+        )
         await interaction.response.send_message(
-            "Só o dono do servidor ou quem tem o cargo **Gerente** pode usar este comando.",
+            "Só o dono, administradores ou quem tem o cargo **Gerente** (ou acima) pode usar este comando.",
             ephemeral=True,
         )
         return
